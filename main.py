@@ -1,34 +1,45 @@
 import os
 import json
 import pika
+from dotenv import load_dotenv
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 from ultralytics import YOLO
-from dotenv import load_dotenv
+
+# Загрузка переменных окружения
 load_dotenv()
+
+# Константы
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST")
 INPUT_QUEUE = os.getenv("INPUT_QUEUE")
 OUTPUT_QUEUE = os.getenv("OUTPUT_QUEUE")
+YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH")
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
+RABBITMQ_USER = os.getenv("RABBITMQ_USER")
+RABBITMQ_PASS = os.getenv("RABBITMQ_PASS")
 
-model = YOLO(os.getenv("YOLO_MODEL_PATH"))
+# Загрузка модели один раз
+model = YOLO(YOLO_MODEL_PATH)
+
 
 def buffer_to_video_file(video_buffer):
-    temp_path = "temp_video.mp4"
-    with open(temp_path, "wb") as f:
+    path = "temp_input.mp4"
+    with open(path, "wb") as f:
         f.write(video_buffer)
-    return temp_path
+    return path
 
-def video_file_to_buffer(video_path):
-    with open(video_path, "rb") as f:
+
+def video_file_to_buffer(path):
+    with open(path, "rb") as f:
         return f.read()
 
+
 def process_video(video_buffer):
-    print("Модель YOLO загружается из:", os.getenv("YOLO_MODEL_PATH"))
-    video_path = buffer_to_video_file(video_buffer)
-    clip = VideoFileClip(video_path)
+    print(f"→ Обработка видео через YOLO по пути: {YOLO_MODEL_PATH}")
+    path = buffer_to_video_file(video_buffer)
+    clip = VideoFileClip(path)
     fps = clip.fps
-    detections = []
-    output_frames = []
+    detections, output_frames = [], []
 
     for frame_id, frame in enumerate(clip.iter_frames(fps=fps, dtype="uint8")):
         results = model(frame)
@@ -36,83 +47,84 @@ def process_video(video_buffer):
         output_frames.append(annotated_frame)
 
         for r in results:
-            if len(r.boxes) > 0:
-                detection_time = frame_id / fps
-                detected_objects = [model.names[int(box.cls)] for box in r.boxes]
+            if r.boxes:
+                time = round(frame_id / fps, 2)
+                detected = [model.names[int(b.cls)] for b in r.boxes]
                 detections.append({
-                    "time": round(detection_time, 2),
-                    "objects": list(set(detected_objects))
+                    "time": time,
+                    "objects": list(set(detected))
                 })
 
-    json_report = {
-        "detections": detections
-    }
-    json_report_bytes = json.dumps(json_report).encode()
-    temp_output_path = "temp_annotated.mp4"
-    annotated_clip = ImageSequenceClip(output_frames, fps=fps)
-    annotated_clip.write_videofile(temp_output_path, codec="libx264",logger=None)
-    processed_video_buffer = video_file_to_buffer(temp_output_path)
+    annotated_path = "temp_annotated.mp4"
+    ImageSequenceClip(output_frames, fps=fps).write_videofile(annotated_path, codec="libx264", logger=None)
 
-    return processed_video_buffer, json_report_bytes
+    return video_file_to_buffer(annotated_path), json.dumps({"detections": detections}).encode()
+
 
 def callback(ch, method, properties, body):
-    data = json.loads(body)
-    video_id = data.get("videoId")
-    video_buffer = bytes(data.get("videoData")["data"])
-    if not video_id or not video_buffer:
-        print("Ошибка: некорректные данные.")
-        return
+    try:
+        data = json.loads(body)
+        video_id = data.get("videoId")
+        video_data = data.get("videoData", {}).get("data")
 
-    print(f"[x] Обработка видео {video_id}")
-    processed_video, json_report = process_video(video_buffer)
+        if not video_id or not video_data:
+            print("‼️ Ошибка: отсутствует videoId или videoData")
+            return
 
-    result_message = json.dumps({
-        "videoId": video_id,
-        "processedVideo": {"type": "Buffer", "data": list(processed_video)},
-        "report": json_report.decode()
-    })
+        print(f"[>] Видео {video_id} получено, запускается обработка...")
+        video_buffer = bytes(video_data)
+        processed_video, report = process_video(video_buffer)
 
-    RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
-    RABBITMQ_USER = os.getenv("RABBITMQ_USER")
-    RABBITMQ_PASS = os.getenv("RABBITMQ_PASS")
+        result = {
+            "videoId": video_id,
+            "processedVideo": {"type": "Buffer", "data": list(processed_video)},
+            "report": report.decode()
+        }
 
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    parameters = pika.ConnectionParameters(
-        host=RABBITMQ_HOST,
-        port=RABBITMQ_PORT,
-        credentials=credentials
-    )
-    connection = pika.BlockingConnection(parameters)
-    """connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST)) СВЕРХУ ТОЖЕ ПОМЕНЯТЬ НАЧИНАЯ С credentials (для локалки)"""
-    channel = connection.channel()
-    channel.queue_declare(queue=OUTPUT_QUEUE, durable=True)
-    channel.basic_publish(exchange="", routing_key=OUTPUT_QUEUE, body=result_message)
-    connection.close()
+        # Новое соединение для отправки результата
+        credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+        connection = pika.BlockingConnection(pika.ConnectionParameters(
+            host=RABBITMQ_HOST,
+            port=RABBITMQ_PORT,
+            credentials=credentials
+        ))
+        channel = connection.channel()
+        channel.queue_declare(queue=OUTPUT_QUEUE, durable=True)
+        channel.basic_publish(exchange="", routing_key=OUTPUT_QUEUE, body=json.dumps(result))
+        connection.close()
 
-    print(f"[✓] Обработанное видео {video_id} отправлено в очередь {OUTPUT_QUEUE}")
+        print(f"[✓] Видео {video_id} обработано и отправлено в очередь {OUTPUT_QUEUE}")
+    except Exception as e:
+        print("‼️ Ошибка в callback:", e)
+
 
 def start_consumer():
-    print("Приложение запустилось")
-    """RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
-    RABBITMQ_USER = os.getenv("RABBITMQ_USER")
-    RABBITMQ_PASS = os.getenv("RABBITMQ_PASS")
+    try:
+        print("🚀 Запуск consumer...")
+        print(f"→ Подключение к RabbitMQ: {RABBITMQ_HOST}:{RABBITMQ_PORT} как {RABBITMQ_USER}")
 
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    parameters = pika.ConnectionParameters(
-        host=RABBITMQ_HOST,
-        port=RABBITMQ_PORT,
-        credentials=credentials
-    )
-    connection = pika.BlockingConnection(parameters)
-    channel = connection.channel()
-    channel.queue_declare(queue=INPUT_QUEUE, durable=True)
-    channel.basic_consume(queue=INPUT_QUEUE, on_message_callback=callback, auto_ack=True)
+        credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+        parameters = pika.ConnectionParameters(
+            host=RABBITMQ_HOST,
+            port=RABBITMQ_PORT,
+            credentials=credentials
+        )
 
-    print(f"[*] Ожидание сообщений в очереди {INPUT_QUEUE}. Для выхода нажмите CTRL+C")
-    channel.start_consuming()
-"""
+        connection = pika.BlockingConnection(parameters)
+        channel = connection.channel()
+        channel.queue_declare(queue=INPUT_QUEUE, durable=True)
+
+        print(f"→ Ожидание сообщений из очереди: {INPUT_QUEUE}")
+        channel.basic_consume(queue=INPUT_QUEUE, on_message_callback=callback, auto_ack=True)
+        channel.start_consuming()
+
+    except Exception as e:
+        print("‼️ Ошибка в start_consumer:", e)
+
+
 if __name__ == "__main__":
     start_consumer()
+
 """from ultralytics import YOLO
 model=YOLO("C:/Users/LEGION/Desktop/Диплом/Test/runs/detect/final_with_negatives/weights/best.pt")
 model.predict(source="C:/Users/LEGION/Downloads/South African _Revolver_ Grenade Launcher.mp4",save=True)"""
