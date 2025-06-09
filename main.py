@@ -1,6 +1,7 @@
 import os
 import json
 import pika
+import traceback
 from dotenv import load_dotenv
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
@@ -120,7 +121,7 @@ def start_consumer():
 
     except Exception as e:
         print("‼️ Ошибка в start_consumer:", e)
-
+        traceback.print_exc()
 
 if __name__ == "__main__":
     start_consumer()
