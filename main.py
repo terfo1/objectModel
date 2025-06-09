@@ -71,7 +71,17 @@ def callback(ch, method, properties, body):
         "report": json_report.decode()
     })
 
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
+    RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
+    RABBITMQ_USER = os.getenv("RABBITMQ_USER")
+    RABBITMQ_PASS = os.getenv("RABBITMQ_PASS")
+
+    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+    parameters = pika.ConnectionParameters(
+        host=RABBITMQ_HOST,
+        port=RABBITMQ_PORT,
+        credentials=credentials
+    )
+    connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     channel.queue_declare(queue=OUTPUT_QUEUE, durable=True)
     channel.basic_publish(exchange="", routing_key=OUTPUT_QUEUE, body=result_message)
@@ -80,7 +90,17 @@ def callback(ch, method, properties, body):
     print(f"[✓] Обработанное видео {video_id} отправлено в очередь {OUTPUT_QUEUE}")
 
 def start_consumer():
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
+    RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
+    RABBITMQ_USER = os.getenv("RABBITMQ_USER")
+    RABBITMQ_PASS = os.getenv("RABBITMQ_PASS")
+
+    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+    parameters = pika.ConnectionParameters(
+        host=RABBITMQ_HOST,
+        port=RABBITMQ_PORT,
+        credentials=credentials
+    )
+    connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     channel.queue_declare(queue=INPUT_QUEUE, durable=True)
     channel.basic_consume(queue=INPUT_QUEUE, on_message_callback=callback, auto_ack=True)
