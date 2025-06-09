@@ -23,6 +23,7 @@ def video_file_to_buffer(video_path):
         return f.read()
 
 def process_video(video_buffer):
+    print("Модель YOLO загружается из:", os.getenv("YOLO_MODEL_PATH"))
     video_path = buffer_to_video_file(video_buffer)
     clip = VideoFileClip(video_path)
     fps = clip.fps
@@ -82,6 +83,7 @@ def callback(ch, method, properties, body):
         credentials=credentials
     )
     connection = pika.BlockingConnection(parameters)
+    """connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST)) СВЕРХУ ТОЖЕ ПОМЕНЯТЬ НАЧИНАЯ С credentials (для локалки)"""
     channel = connection.channel()
     channel.queue_declare(queue=OUTPUT_QUEUE, durable=True)
     channel.basic_publish(exchange="", routing_key=OUTPUT_QUEUE, body=result_message)
@@ -90,7 +92,8 @@ def callback(ch, method, properties, body):
     print(f"[✓] Обработанное видео {video_id} отправлено в очередь {OUTPUT_QUEUE}")
 
 def start_consumer():
-    RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
+    print("Приложение запустилось")
+    """RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
     RABBITMQ_USER = os.getenv("RABBITMQ_USER")
     RABBITMQ_PASS = os.getenv("RABBITMQ_PASS")
 
@@ -107,7 +110,7 @@ def start_consumer():
 
     print(f"[*] Ожидание сообщений в очереди {INPUT_QUEUE}. Для выхода нажмите CTRL+C")
     channel.start_consuming()
-
+"""
 if __name__ == "__main__":
     start_consumer()
 """from ultralytics import YOLO
