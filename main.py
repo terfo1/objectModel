@@ -1,4 +1,4 @@
-import os
+"""import os
 import json
 import pika
 import traceback
@@ -125,7 +125,7 @@ def start_consumer():
 
 if __name__ == "__main__":
     start_consumer()
-
-"""from ultralytics import YOLO
+"""
+from ultralytics import YOLO
 model=YOLO("C:/Users/LEGION/Desktop/Диплом/Test/runs/detect/final_with_negatives/weights/best.pt")
-model.predict(source="C:/Users/LEGION/Downloads/South African _Revolver_ Grenade Launcher.mp4",save=True)"""
+model.predict(source="C:/Users/LEGION/Desktop/VIDEO_ ATF agent demonstrates how a Glock Switch fires.mp4",save=True)
