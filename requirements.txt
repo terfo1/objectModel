@@ -1,0 +1,6 @@
+opencv-python
+numpy
+pika
+moviepy
+ultralytics
+python-dotenv

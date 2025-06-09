@@ -1,0 +1,6 @@
+.env
+.idea/
+runs/
+temp_*.mp4
+report.json
+venv/
